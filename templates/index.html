@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Анализ и перестановка RGB каналов изображения</title>
+<style>
+  body { font-family: Arial, sans-serif; max-width: 900px; margin: 0 auto; padding: 16px; color: #222; }
+  h1 { text-align: center; font-size: 1.4em; }
+  h2 { font-size: 1.1em; border-bottom: 1px solid #ccc; padding-bottom: 4px; }
+  section { margin-bottom: 24px; padding: 12px; border: 1px solid #ddd; border-radius: 8px; }
+  canvas { max-width: 100%; border: 1px solid #999; display: block; margin: 8px 0; background: #fff; }
+  .controls { display: flex; flex-wrap: wrap; gap: 16px; align-items: center; }
+  .ts-controls { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 10px; }
+  button { padding: 8px 18px; font-size: 1em; cursor: pointer; }
+  label { font-size: 0.95em; }
+</style>
+</head>
+<body>
+
+<h1>Анализ и перестановка RGB каналов изображения</h1>
+
+<section>
+  <h2>Загрузить изображение</h2>
+  <input type="file" id="fileInput" accept="image/*">
+</section>
+
+<section>
+  <h2>Исходное изображение</h2>
+  <canvas id="srcCanvas"></canvas>
+</section>
+
+<section>
+  <h2>Порядок каналов (R,G,B)</h2>
+  <div class="controls">
+    <label>R &rarr;
+      <select id="orderR">
+        <option value="R" selected>R</option>
+        <option value="G">G</option>
+        <option value="B">B</option>
+      </select>
+    </label>
+    <label>G &rarr;
+      <select id="orderG">
+        <option value="R">R</option>
+        <option value="G" selected>G</option>
+        <option value="B">B</option>
+      </select>
+    </label>
+    <label>B &rarr;
+      <select id="orderB">
+        <option value="R">R</option>
+        <option value="G">G</option>
+        <option value="B" selected>B</option>
+      </select>
+    </label>
+    <button id="applyBtn">Применить перестановку</button>
+  </div>
+
+  <!-- Доп. задание: добавление временной метки по желанию пользователя -->
+  <div class="ts-controls">
+    <label>
+      <input type="checkbox" id="tsOn">
+      Добавить временную метку (дата/время создания)
+    </label>
+    <label>Дата и время:
+      <input type="datetime-local" id="tsValue">
+    </label>
+  </div>
+</section>
+
+<section>
+  <h2>Изображение после перестановки каналов</h2>
+  <canvas id="resCanvas"></canvas>
+</section>
+
+<section>
+  <h2>Гистограмма распределения цветов (R, G, B)</h2>
+  <canvas id="histCanvas" width="800" height="260"></canvas>
+</section>
+
+<section>
+  <h2>Среднее по вертикали (по строкам)</h2>
+  <canvas id="rowCanvas" width="800" height="220"></canvas>
+</section>
+
+<section>
+  <h2>Среднее по горизонтали (по столбцам)</h2>
+  <canvas id="colCanvas" width="800" height="220"></canvas>
+</section>
+
+<script>
+"use strict";
+
+const srcCanvas = document.getElementById("srcCanvas");
+const resCanvas = document.getElementById("resCanvas");
+const histCanvas = document.getElementById("histCanvas");
+const rowCanvas  = document.getElementById("rowCanvas");
+const colCanvas  = document.getElementById("colCanvas");
+
+const srcCtx = srcCanvas.getContext("2d", { willReadFrequently: true });
+const resCtx = resCanvas.getContext("2d", { willReadFrequently: true });
+
+const tsOn = document.getElementById("tsOn");
+const tsValue = document.getElementById("tsValue");
+
+let srcData = null; // ImageData исходного изображения
+
+// ---- Загрузка изображения ----
+document.getElementById("fileInput").addEventListener("change", function (e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  const img = new Image();
+  img.onload = function () {
+    const maxW = 640;
+    const scale = Math.min(1, maxW / img.width);
+    srcCanvas.width  = Math.round(img.width * scale);
+    srcCanvas.height = Math.round(img.height * scale);
+    srcCtx.drawImage(img, 0, 0, srcCanvas.width, srcCanvas.height);
+    srcData = srcCtx.getImageData(0, 0, srcCanvas.width, srcCanvas.height);
+    resCanvas.width = srcCanvas.width;
+    resCanvas.height = srcCanvas.height;
+  };
+  img.src = URL.createObjectURL(file);
+});
+
+// ---- Перестановка каналов ----
+const MAP = { R: 0, G: 1, B: 2 };
+
+document.getElementById("applyBtn").addEventListener("click", function () {
+  if (!srcData) { alert("Сначала загрузите изображение"); return; }
+  const pR = MAP[document.getElementById("orderR").value];
+  const pG = MAP[document.getElementById("orderG").value];
+  const pB = MAP[document.getElementById("orderB").value];
+
+  const src = srcData.data;
+  const out = resCtx.createImageData(srcData.width, srcData.height);
+  for (let i = 0; i < src.length; i += 4) {
+    out.data[i]     = src[i + pR]; // новый R <- выбранный исходный канал
+    out.data[i + 1] = src[i + pG]; // новый G <- выбранный исходный канал
+    out.data[i + 2] = src[i + pB]; // новый B <- выбранный исходный канал
+    out.data[i + 3] = 255;
+  }
+  resCtx.putImageData(out, 0, 0);
+
+  // Доп. задание: временная метка по желанию пользователя
+  if (tsOn.checked) drawTimestamp();
+
+  analyzeResult();
+});
+
+// ---- Временная метка ----
+function drawTimestamp() {
+  const text = tsValue.value
+    ? new Date(tsValue.value).toLocaleString("ru-RU")
+    : new Date().toLocaleString("ru-RU");
+  const fs = Math.max(14, Math.round(resCanvas.width / 40));
+  resCtx.font = "bold " + fs + "px sans-serif";
+  resCtx.textAlign = "left";
+  resCtx.textBaseline = "alphabetic";
+  const x = 10, y = resCanvas.height - 12;
+  resCtx.lineWidth = Math.max(2, fs / 10);
+  resCtx.strokeStyle = "rgba(0,0,0,0.9)";       // тень для читаемости
+  resCtx.strokeText(text, x, y);
+  resCtx.fillStyle = "rgba(255,255,255,0.95)";  // сам текст
+  resCtx.fillText(text, x, y);
+}
+
+// ---- Анализ результата: гистограмма и средние ----
+function analyzeResult() {
+  const w = resCanvas.width, h = resCanvas.height;
+  const data = resCtx.getImageData(0, 0, w, h).data;
+
+  // гистограммы по 256 бинам для R, G, B
+  const hist = [[], [], []].map(function () { return new Array(256).fill(0); });
+  // среднее по строкам (по вертикали) и по столбцам (по горизонтали)
+  const rowSum = new Array(h).fill(0);
+  const colSum = new Array(w).fill(0);
+
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = (y * w + x) * 4;
+      hist[0][data[i]]++;
+      hist[1][data[i + 1]]++;
+      hist[2][data[i + 2]]++;
+      rowSum[y] += data[i] + data[i + 1] + data[i + 2];
+      colSum[x] += data[i] + data[i + 1] + data[i + 2];
+    }
+  }
+  const rowMean = rowSum.map(function (s) { return s / (w * 3); });
+  const colMean = colSum.map(function (s) { return s / (h * 3); });
+
+  drawHistogram(hist);
+  drawLineChart(rowCanvas, rowMean, 0, 255);
+  drawLineChart(colCanvas, colMean, 0, 255);
+}
+
+function drawHistogram(hist) {
+  const ctx = histCanvas.getContext("2d");
+  const w = histCanvas.width, hgt = histCanvas.height;
+  const pad = 40;
+  ctx.clearRect(0, 0, w, hgt);
+  const maxV = Math.max.apply(null,
+    hist[0].concat(hist[1]).concat(hist[2]).map(Math.max)) || 1;
+  const gw = w - pad - 10, gh = hgt - pad - 10;
+  // оси
+  ctx.strokeStyle = "#333";
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(pad, 10); ctx.lineTo(pad, hgt - pad); ctx.lineTo(w - 10, hgt - pad);
+  ctx.stroke();
+  ctx.fillStyle = "#333";
+  ctx.font = "11px sans-serif";
+  ctx.fillText("0", pad - 4, hgt - pad + 14);
+  ctx.fillText("255", w - 24, hgt - pad + 14);
+  ctx.fillText(maxV, 8, 16);
+  // подписи каналов
+  ctx.fillStyle = "rgb(200,0,0)";  ctx.fillText("R", w - 50, 16);
+  ctx.fillStyle = "rgb(0,150,0)";  ctx.fillText("G", w - 36, 16);
+  ctx.fillStyle = "rgb(0,0,220)";  ctx.fillText("B", w - 22, 16);
+  // линии гистограмм
+  const colors = ["rgb(220,0,0)", "rgb(0,160,0)", "rgb(0,0,220)"];
+  for (let c = 0; c < 3; c++) {
+    ctx.strokeStyle = colors[c];
+    ctx.globalAlpha = 0.8;
+    ctx.beginPath();
+    for (let v = 0; v < 256; v++) {
+      const x = pad + gw * v / 255;
+      const y = hgt - pad - gh * hist[c][v] / maxV;
+      if (v === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+}
+
+function drawLineChart(canvas, values, vmin, vmax) {
+  const ctx = canvas.getContext("2d");
+  const w = canvas.width, hgt = canvas.height;
+  const pad = 40;
+  ctx.clearRect(0, 0, w, hgt);
+  const gw = w - pad - 10, gh = hgt - pad - 10;
+  // оси
+  ctx.strokeStyle = "#333";
+  ctx.beginPath();
+  ctx.moveTo(pad, 10); ctx.lineTo(pad, hgt - pad); ctx.lineTo(w - 10, hgt - pad);
+  ctx.stroke();
+  ctx.fillStyle = "#333";
+  ctx.font = "11px sans-serif";
+  ctx.fillText(vmin, pad - 10, hgt - pad + 14);
+  ctx.fillText(vmax, w - 30, hgt - pad + 14);
+  // линия профиля
+  ctx.strokeStyle = "#000";
+  ctx.lineWidth = 1.2;
+  ctx.beginPath();
+  const n = values.length;
+  for (let i = 0; i < n; i++) {
+    const x = pad + gw * i / (n - 1);
+    const y = hgt - pad - gh * (values[i] - vmin) / (vmax - vmin);
+    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+}
+
+// поле временной метки по умолчанию заполняется текущими датой и временем
+(function initTimestamp() {
+  const now = new Date();
+  now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
+  tsValue.value = now.toISOString().slice(0, 16);
+})();
+</script>
+</body>
+</html>
